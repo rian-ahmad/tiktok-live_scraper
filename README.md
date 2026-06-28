@@ -1,125 +1,74 @@
 # TikTok Live Comment Listener
 
-Program ini menggunakan library [TikTokLive](https://github.com/isaackogan/TikTokLive) untuk terhubung ke live stream TikTok dan mengumpulkan komentar dari penonton. Komentar yang diterima akan disimpan dalam file CSV untuk analisis lebih lanjut. 
+Program ini menggunakan library [TikTokLive](https://github.com/isaackogan/TikTokLive) untuk terhubung ke live stream TikTok dan mencatat aktivitas seperti komentar, like, share, dan jumlah penonton. Semua data disimpan ke file JSON.
 
-## 1. Dependencies
+## 1. Persyaratan
 
-Pastikan Anda menginstall dependensi yang diperlukan:
+Pastikan Anda telah menginstal dependensi berikut:
 
 ```bash
-pip install TikTokLive pandas
+pip install TikTokLive python-dotenv
 ```
 
-## 2. Import Library
+## 2. File yang Dibutuhkan
 
-Di bawah ini adalah persiapan 
+Buat file konfigurasi lingkungan dan file JSON konfigurasi sebelum menjalankan program.
 
-```python
-import asyncio
-from TikTokLive import TikTokLiveClient
-from TikTokLive.client.logger import LogLevel
-import datetime
-import pandas as pd
-from datetime import datetime
-from TikTokLive.events import ConnectEvent, CommentEvent
+### File .env
+
+```env
+CONFIG_FILE=config.json
+TARGET=nama_user_tiktok
+VIEWERS_FILE=viewers.json
+KOMENTAR_FILE=komentar.json
+LIKE_FILE=like.json
+SHARE_FILE=share.json
 ```
-- `asyncio` : Library bawaan Python untuk asynchronous programming.
-- `TikTokLiveClient`: Client utama yang digunakan untuk terhubung dan berinteraksi dengan TikTok live stream.
-- `LogLevel`: Mengatur tingkat logging dari aktivitas TikTokLiveClient.
-- `datetime`: Mengelola waktu dan tanggal.
-- `pandas`: Library untuk manipulasi data, digunakan untuk membaca dan menulis file CSV.
-- `ConnectEvent` dan `CommentEvent`: Event yang di-trigger ketika terhubung ke live stream dan ketika menerima komentar.
 
-## 3. Memuat Data dan Menyiapkan Struktur untuk Komentar
+### File config.json
 
-```python
-df_komentar = pd.read_csv('komentar.csv')
-
-komentar = {
-    'datetime': [],
-    'nickname': [],
-    'komentar': []
+```json
+{
+  "DURATION": 60,
+  "DELAY": 60
 }
-
-target = 'target_user'
-
-```
-- `df_komentar`: Membaca data komentar yang sudah ada dari file komentar.csv menggunakan pandas.
-- `komentar`: Dictionary yang menyimpan data baru berupa waktu, nama pengguna, dan isi komentar yang diterima selama live.
-- `target`: Username TikTok yang akan dimonitor untuk live stream, ganti `target_user` dengan target yang anda ingin monitor.
-
-## 4. Fungsi untuk Menyimpan Komentar ke CSV
-
-```python
-client: TikTokLiveClient = TikTokLiveClient(
-    unique_id=target
-)
 ```
 
-- `client`: Membuat instance TikTokLiveClient yang terhubung ke live stream pengguna TikTok berdasarkan target yang ditentukan.
+- `DURATION`: Durasi dalam detik sebelum client memutus koneksi setelah terhubung.
+- `DELAY`: Jeda waktu saat mengecek apakah target sedang live.
 
-## 5. Event: Saat Berhasil Terhubung
+## 3. Alur Program
 
-```python
-@client.on(ConnectEvent)
-async def on_connect(event: ConnectEvent):
-    client.logger.info(f"Connected to @{event.unique_id}!")
-    await asyncio.sleep(3600)
-    for end in range(10):
-        time = 10 - end
-        print(f'Client will disconnect in {time}')
-    await client.disconnect()
-    
-    save(df_komentar, komentar, 'komentar.csv')
+Skrip utama berada di [TiktokLive.py](TiktokLive.py). Program akan:
+
+- Memeriksa apakah akun target sedang live secara berkala,
+- Terhubung ke live stream saat akun sedang live,
+- Mencatat event berikut:
+  - Komentar lewat `CommentEvent`,
+  - Like lewat `LikeEvent`,
+  - Share lewat `SocialEvent`,
+  - Total viewers lewat `RoomUserSeqEvent`,
+- Menyimpan data ke file JSON yang telah ditentukan.
+
+## 4. Output yang Dihasilkan
+
+Saat program berjalan, file berikut akan dibuat atau diperbarui:
+
+- [komentar.json](komentar.json)
+- [like.json](like.json)
+- [share.json](share.json)
+- [viewers.json](viewers.json)
+
+Setiap entri berisi timestamp dan data sesuai event yang diterima.
+
+## 5. Menjalankan Program
+
+```bash
+python TiktokLive.py
 ```
 
-- Ketika terhubung ke live stream, program akan menunggu selama satu jam ( `await asyncio.sleep(3600)` ) sebelum mulai menghitung mundur untuk memutus koneksi.
-- Data komentar disimpan ke file CSV menggunakan fungsi `save`.
-
-## 6. Event: Saat Menerima Komentar Baru
-
-```python
-@client.on(CommentEvent)
-async def on_comment(event: CommentEvent) -> None:
-    print(f"{datetime.now()} -> {event.user.nickname} -> {event.comment}")
-    komentar['datetime'].append(datetime.now())
-    komentar['nickname'].append(f'{event.user.nickname}')
-    komentar['komentar'].append(f'{event.comment}')
-```
-
-- Setiap kali ada komentar baru, waktu, nama pengguna, dan isi komentar akan ditambahkan ke dictionary `komentar`.
-- Komentar juga akan ditampilkan di terminal menggunakan `print`.
-
-## 7. Memeriksa Status Live Stream
-
-```python
-async def check_loop(client):
-    while True:
-        while not await client.is_live():
-            client.logger.info(f'{datetime.now()} -> {target} is currently not live')
-            await asyncio.sleep(60)
-
-        client.logger.info(f'{datetime.now()} -> {target} is live!')
-        await client.connect()
-```
-
-Fungsi **check_loop** secara berkala memeriksa apakah pengguna `target` sedang live. Jika tidak live, akan menunggu selama 60 detik sebelum memeriksa ulang. Ketika live stream dimulai, program akan menghubungkan client ke stream tersebut.
-
-## 8. Menjalankan Program
-```python
-if __name__ == '__main__':
-    client.logger.setLevel(LogLevel.INFO.value)
-    
-    try:
-        asyncio.run(check_loop(client))
-    except:
-        save(df_komentar, komentar, 'komentar.csv')
-```
-
-- Mengatur tingkat logging untuk menampilkan informasi penting.
-- Menjalankan fungsi check_loop untuk memulai pengecekan status live.
-- Jika terjadi kesalahan selama eksekusi, komentar yang sudah diterima akan disimpan ke CSV.
+Program akan terus memantau akun target sampai koneksi selesai sesuai `DURATION`, lalu menyimpan data terakhir ke file JSON.
 
 ## Lisensi
 
-Proyek ini menggunakan lisensi MIT. Lihat di [LICENSE](https://github.com/rian-ahmad/tiktok-live_comments/blob/main/LICENSE) untuk tahu lebih lanjut.
+Proyek ini menggunakan lisensi MIT. Lihat [LICENSE](LICENSE) untuk detail lebih lanjut.

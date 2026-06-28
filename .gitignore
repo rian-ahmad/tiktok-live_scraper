@@ -1,21 +1,15 @@
-/1 Dipake
-/join.csv
-/komentar.csv
-/komentar_agustus.csv
-/komentar_september.csv
-/live streaming
-/penjualan 2023.csv
-/rentang.py
-/rentang_agustus.csv
-/rentang_agustus.xlsx
-/rentang_september.csv
-/Screenshot 2024-08-20 130804.png
-/Screenshot 2024-08-20 140444.png
-/Screenshot 2024-08-22 131034.png
-/sekarang buat dengan ketentuan seba.txt
-/test.py
-/test_TiktokLive.py
-/_interaksi.csv
-/_komentar.csv
-/_rentang_agustus.csv
-/_rentang_september.csv
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# VS Code settings
+.vscode/
+
+# Runtime output files
+komentar.json
+like.json
+share.json
+viewers.json
