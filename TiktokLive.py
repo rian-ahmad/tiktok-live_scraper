@@ -1,148 +1,163 @@
 import asyncio
 import json
+import os
+from datetime import datetime
+from dotenv import load_dotenv
 from TikTokLive import TikTokLiveClient
 from TikTokLive.client.logger import LogLevel
 from TikTokLive.events import ConnectEvent, CommentEvent, LikeEvent, SocialEvent, RoomUserSeqEvent
-from datetime import datetime
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
+class TikTokLiveScraper:
+    def __init__(self, target=None, duration=None, delay=None):
+        """
+        Inisialisasi TikTokLiveScraper dengan kontrol state running.
+        """
+        load_dotenv()
+        
+        config_file = os.getenv("CONFIG_FILE", "config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r") as file:
+                self.config = json.load(file)
+        else:
+            self.config = {"DURATION": 60, "DELAY": 60}
+        
+        self.target = target or os.getenv("TARGET")
+        self.duration = duration or self.config.get("DURATION", 60)
+        self.delay = delay or self.config.get("DELAY", 60)
+        
+        if not self.target:
+            raise ValueError("Target username (unique_id) harus ditentukan.")
+        
+        self.viewer_file = os.getenv("VIEWERS_FILE", "viewers.json")
+        self.komentar_file = os.getenv("KOMENTAR_FILE", "komentar.json")
+        self.like_file = os.getenv("LIKE_FILE", "like.json")
+        self.share_file = os.getenv("SHARE_FILE", "share.json")
+        
+        self.viewer_list = self._load_json(self.viewer_file)
+        self.komentar_list = self._load_json(self.komentar_file)
+        self.like_list = self._load_json(self.like_file)
+        self.share_list = self._load_json(self.share_file)
+        
+        self.client = TikTokLiveClient(unique_id=self.target)
+        
+        self.is_running = False
+        self.loop = None
+        
+        self._register_events()
 
-with open(os.getenv("CONFIG_FILE"), "r") as file:
-    config = json.load(file)
+    def _load_json(self, file_path):
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError:
+                    return []
+        return []
 
-target = os.getenv("TARGET")
-viewer_file = os.getenv("VIEWERS_FILE")
-komentar_file = os.getenv("KOMENTAR_FILE")
-like_file = os.getenv("LIKE_FILE")
-share_file = os.getenv("SHARE_FILE")
+    def save(self, data, file_path):
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4, default=str)
 
-if os.path.exists(viewer_file):
-    with open(viewer_file, 'r', encoding='utf-8') as f:
+    def save_all_data(self):
+        """Menyimpan seluruh state list ke file JSON."""
+        self.save(self.komentar_list, self.komentar_file)
+        self.save(self.like_list, self.like_file)
+        self.save(self.share_list, self.share_file)
+        self.save(self.viewer_list, self.viewer_file)
+
+    def _register_events(self):
+        @self.client.on(ConnectEvent)
+        async def on_connect(event: ConnectEvent):
+            self.client.logger.info(f"Connected to @{event.unique_id}!")
+            
+            for _ in range(int(self.duration)):
+                if not self.is_running:
+                    break
+                await asyncio.sleep(1)
+            
+            if self.is_running and self.client.connected:
+                for end in range(10):
+                    if not self.is_running:
+                        break
+                    time = 10 - end
+                    print(f'Client will disconnect in {time}')
+                    await asyncio.sleep(1)
+                
+                if self.client.connected:
+                    await self.client.disconnect()
+            
+            self.save_all_data()
+
+        @self.client.on(RoomUserSeqEvent)
+        async def on_viewer_update(event: RoomUserSeqEvent) -> None:
+            self.client.logger.info(f"\n[{datetime.now()}] Total viewers: {event.total_user}")
+            self.viewer_list.append({'datetime': datetime.now(), 'viewers': event.total_user})
+
+        @self.client.on(LikeEvent)
+        async def on_like(event: LikeEvent) -> None:
+            self.client.logger.info(f"\n[{datetime.now()}] Total Likes: {event.total}")
+            self.like_list.append({'datetime': datetime.now(), 'like': event.total})
+
+        @self.client.on(CommentEvent)
+        async def on_comment(event: CommentEvent) -> None:
+            self.client.logger.info(f"\n[{datetime.now()}] {event.user.nick_name}: {event.comment}")
+            self.komentar_list.append({
+                'datetime': datetime.now(),
+                'nickname': event.user.nick_name,
+                'komentar': event.comment
+            })
+
+        @self.client.on(SocialEvent)
+        async def on_share(event: SocialEvent) -> None:
+            self.client.logger.info(f"\n[{datetime.now()}] Total Shares: {event.share_count}")
+            self.share_list.append({'datetime': datetime.now(), 'share': event.share_count})
+
+    async def check_loop(self):
+        """Loop pengecekan status Live dengan interupsi stop yang responsif."""
+        while self.is_running:
+            if await self.client.is_live():
+                self.client.logger.info(f'{datetime.now()} -> {self.target} is live!')
+                await self.client.connect()
+                break
+            
+            self.client.logger.info(f'{datetime.now()} -> {self.target} is currently not live')
+            
+            # Mengganti blocking sleep lama dengan perulangan 1 detik
+            for _ in range(int(self.delay)):
+                if not self.is_running:
+                    break
+                await asyncio.sleep(1)
+
+    def start(self):
+        """Menjalankan scraper dan menginisialisasi event loop baru."""
+        self.client.logger.setLevel(LogLevel.INFO.value)
+        self.is_running = True
+        
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        
         try:
-            viewer_list = json.load(f)
-        except json.JSONDecodeError:
-            viewer_list = []
-else:
-    viewer_list = []
+            self.loop.run_until_complete(self.check_loop())
+        except Exception as e:
+            self.client.logger.error(f"Error encountered: {e}")
+        finally:
+            self.save_all_data()
+            self.loop.close()
 
-if os.path.exists(komentar_file):
-    with open(komentar_file, 'r', encoding='utf-8') as f:
-        try:
-            komentar_list = json.load(f)
-        except json.JSONDecodeError:
-            komentar_list = []
-else:
-    komentar_list = []
-
-
-if os.path.exists(like_file):
-    with open(like_file, 'r', encoding='utf-8') as f:
-        try:
-            like_list = json.load(f)
-        except json.JSONDecodeError:
-            like_list = []
-else:
-    like_list = []
-
-
-if os.path.exists(share_file):
-    with open(share_file, 'r', encoding='utf-8') as f:
-        try:
-            share_list = json.load(f)
-        except json.JSONDecodeError:
-            share_list = []
-else:
-    share_list = []
-
-
-def save(data, file):
-    """
-    Menyimpan data ke dalam file JSON.
-
-    Args:
-        data: Data yang akan disimpan.
-        file (str): Path ke file JSON.
-    """
-    with open(file, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4, default=str)
-
-
-client: TikTokLiveClient = TikTokLiveClient(
-    unique_id=target
-)
-
-
-@client.on(ConnectEvent)
-async def on_connect(event: ConnectEvent):
-    client.logger.info(f"Connected to @{event.unique_id}!")
-    await asyncio.sleep(config["DURATION"])
-    for end in range(10):
-        time = 10 - end
-        print(f'Client will disconnect in {time}')
-    await client.disconnect()
-
-    save(komentar_list, komentar_file)
-    save(like_list, like_file)
-    save(share_list, share_file)
-    save(viewer_list, viewer_file)
-
-
-@client.on(RoomUserSeqEvent)
-async def on_viewer_update(event: RoomUserSeqEvent) -> None:
-    client.logger.info(f"\n[{datetime.now()}] Total viewers: {event.total_user}")
-    viewer_list.append({
-        'datetime': datetime.now(),
-        'viewers': event.total_user 
-    })
-
-
-@client.on(LikeEvent)
-async def on_like(event: LikeEvent) -> None:
-    client.logger.info(f"\n[{datetime.now()}] Total Likes: {event.total}")
-    like_list.append({
-        'datetime': datetime.now(),
-        'like': event.total
-    })
-
-
-@client.on(CommentEvent)
-async def on_comment(event: CommentEvent) -> None:
-    client.logger.info(f"\n[{datetime.now()}] {event.user.nick_name}: {event.comment}")
-    komentar_list.append({
-        'datetime': datetime.now(),
-        'nickname': event.user.nick_name,
-        'komentar': event.comment
-    })
-
-
-@client.on(SocialEvent)
-async def on_share(event: SocialEvent) -> None:
-    client.logger.info(f"\n[{datetime.now()}] Total Shares: {event.share_count}")
-    share_list.append({
-        'datetime': datetime.now(),
-        'share': event.share_count
-    })
-
-
-async def check_loop(client):
-    # while True:
-    while not await client.is_live():
-        client.logger.info(f'{datetime.now()} -> {target} is currently not live')
-        await asyncio.sleep(config["DELAY"])
-
-    client.logger.info(f'{datetime.now()} -> {target} is live!')
-    await client.connect()
-
+    def stop(self):
+        """Menghentikan proses scraping dari thread eksternal."""
+        self.is_running = False
+        self.client.logger.info("Menghentikan scraper...")
+        
+        if self.loop and self.loop.is_running():
+            if self.client.connected:
+                asyncio.run_coroutine_threadsafe(self.client.disconnect(), self.loop)
+        
+        self.save_all_data()
 
 if __name__ == '__main__':
-    client.logger.setLevel(LogLevel.INFO.value)
-
+    scraper = TikTokLiveScraper()
     try:
-        asyncio.run(check_loop(client))
-    except Exception:
-        save(viewer_list, viewer_file)
-        save(komentar_list, komentar_file)
-        save(like_list, like_file)
-        save(share_list, share_file)
+        scraper.start()
+    except KeyboardInterrupt:
+        scraper.stop()
